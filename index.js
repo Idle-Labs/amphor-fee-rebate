@@ -19,6 +19,7 @@ const CDOs = [
       performanceFee: 0.15,
       performanceFeeDiscounted: 0.07,
       address: '0x9e0c5ee5e4B187Cf18B23745FCF2b6aE66a9B52f',
+      referrals: ['0x32B0aCfBb18C270491CDD124EB104A8d25A182ca'],
       contract: new web3.eth.Contract(idleCDOAbi, '0x9e0c5ee5e4B187Cf18B23745FCF2b6aE66a9B52f'),
     },
     Pool:{
@@ -53,7 +54,10 @@ function sortArrayByKey(array, key, order = 'asc') {
   return [...array].sort((a, b) => (parseInt(a[key]) < parseInt(b[key]) ? val1 : val2));
 }
 
-function getBlockBalances(transferEvents, targetBlockNumber) {
+/*
+Get user balances in a specific blockNumber (check only deposits with referrals)
+*/
+function getBlockBalances(transferEvents, targetBlockNumber, referralEvents, allowedReferrals) {
   const balances = {};
 
   transferEvents.forEach(event => {
@@ -63,17 +67,16 @@ function getBlockBalances(transferEvents, targetBlockNumber) {
       const sender = event.returnValues.from;
       const receiver = event.returnValues.to;
       const value = event.returnValues.value;
+      const referral = referralEvents.find( refEvent => refEvent.transactionHash === event.transactionHash && allowedReferrals.map( ref => ref.toLowerCase() ).includes(refEvent.returnValues._ref.toLowerCase()) )
 
-      // Aggiorna il saldo del mittente
       if (sender !== ZERO_ADDRESS){
         if (!balances[sender]) {
           balances[sender] = BNify(0);
         }
-        balances[sender] = balances[sender].minus(BNify(value));
+        balances[sender] = BNify.maximum(0, balances[sender].minus(BNify(value)));
       }
 
-      // Aggiorna il saldo del ricevente
-      if (receiver !== ZERO_ADDRESS){
+      if (receiver !== ZERO_ADDRESS && referral){
         if (!balances[receiver]) {
           balances[receiver] = BNify(0);
         }
@@ -90,6 +93,7 @@ async function main(){
   const promises = CDOs.reduce( (promises, cdoInfo) => {
     const cdoConfig = cdoInfo.CDO
     const poolConfig = cdoInfo.Pool
+
     const epochStartPromise = poolConfig.contract.getPastEvents('EpochStart', {
       fromBlock: poolConfig.startBlock,
       toBlock: 'latest'
@@ -116,24 +120,34 @@ async function main(){
 
     promises.bbTransfers.push(bbTransfers)
 
+    const referralEvents = cdoConfig.contract.getPastEvents('Referral', {
+      fromBlock: cdoConfig.startBlock,
+      toBlock: 'latest'
+    }).then( events => ({events, cdoAddress: cdoConfig.address}) );
+
+    promises.referralEvents.push(referralEvents)
+
     return promises
   }, {
     endEvents: [],
     startEvents: [],
     aaTransfers: [],
-    bbTransfers: []
+    bbTransfers: [],
+    referralEvents: []
   })
 
   const [
     aaTransfers,
     bbTransfers,
     epochStartEvents,
-    epochEndEvents
+    epochEndEvents,
+    referralEvents
   ] = await Promise.all([
     Promise.all(promises.aaTransfers),
     Promise.all(promises.bbTransfers),
     Promise.all(promises.startEvents),
-    Promise.all(promises.endEvents)
+    Promise.all(promises.endEvents),
+    Promise.all(promises.referralEvents)
   ])
 
   // Get cdos epochs start/end blocks
@@ -174,18 +188,18 @@ async function main(){
     return cdosEpochs
   }, {})
 
-  const multicallPromises = Object.keys(cdosEpochsTranchePricesMulticalls).reduce( (multicallPromises, cdoAddress) => {
-    Object.keys(cdosEpochsTranchePricesMulticalls[cdoAddress]).forEach( blockNumber => {
-      const calls = cdosEpochsTranchePricesMulticalls[cdoAddress][blockNumber]
-      multicallPromises.push(multiCall.executeMulticalls(calls, null, blockNumber).then( prices => ({prices, cdoAddress, blockNumber}) ))
-    })
-    return multicallPromises
-  }, [])
+  // Get for each epoch the startPrice and endPrice of the vault
+  const multicallPromises = Object.entries(cdosEpochsTranchePricesMulticalls).flatMap( ([cdoAddress, multiCalls]) => (
+    Object.entries(cdosEpochsTranchePricesMulticalls[cdoAddress]).flatMap( ([blockNumber, calls]) => (
+      multiCall.executeMulticalls(calls, null, blockNumber).then( prices => ({prices, cdoAddress, blockNumber}) )
+    ))
+  ))
 
   // Execute multicalls
   const cdoEpochsTranchePrices = await Promise.all(multicallPromises)
 
-  Object.keys(cdosEpochs).forEach( cdoAddress => {
+  // feeRebate = (userNetProfit*1/0.85-userNetProfit)-(userNetProfit*1/0.93-userNetProfit)
+  const csv = Object.keys(cdosEpochs).reduce( (csv, cdoAddress) => {
 
     const cdoInfo = CDOs.find( cdoInfo => cdoInfo.CDO.address === cdoAddress )
 
@@ -219,50 +233,53 @@ async function main(){
 
       const cdoAATransfers = aaTransfers.find( event => event.cdoAddress === cdoAddress ).transfers
       const cdoBBTransfers = bbTransfers.find( event => event.cdoAddress === cdoAddress ).transfers
+      const cdoReferralEvents = referralEvents.find( event => event.cdoAddress === cdoAddress ).events
 
-      const userAABalances = getBlockBalances(cdoAATransfers, epochInfo.startBlock)
-      const userBBBalances = getBlockBalances(cdoBBTransfers, epochInfo.startBlock)
+      const userAABalances = getBlockBalances(cdoAATransfers, epochInfo.startBlock, cdoReferralEvents, cdoInfo.CDO.referrals)
+      const userBBBalances = getBlockBalances(cdoBBTransfers, epochInfo.startBlock, cdoReferralEvents, cdoInfo.CDO.referrals)
 
       epochInfo.feeRebate = {}
 
-      epochInfo.AA.feeRebate = Object.keys(userAABalances).reduce( (usersAccruedFees, userAddress) => {
+      Object.keys(userAABalances).forEach( (userAddress) => {
         const userBalance = userAABalances[userAddress].div(1e18)
         const userNetProfit = userBalance.times(epochInfo.AA.netProfitPercentage)
         const userGrossProfit = userNetProfit.times(1).div(BNify(1).minus(cdoInfo.CDO.performanceFee))
         const userGrossProfitDiscounted = userNetProfit.times(1).div(BNify(1).minus(cdoInfo.CDO.performanceFeeDiscounted))
         const feesToReturn = userGrossProfit.minus(userGrossProfitDiscounted)
-        usersAccruedFees[userAddress] = feesToReturn
 
         if (!epochInfo.feeRebate[userAddress]){
           epochInfo.feeRebate[userAddress] = BNify(0)
         }
         epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(feesToReturn)
+        // console.log(cdoAddress, epochInfo.startBlock, 'AA', userAddress, userBalance.toString(), feesToReturn.toString())
+      })
 
-        return usersAccruedFees
-      }, {})
-
-      epochInfo.BB.feeRebate = Object.keys(userBBBalances).reduce( (usersAccruedFees, userAddress) => {
+      Object.keys(userBBBalances).forEach( (userAddress) => {
         const userBalance = userBBBalances[userAddress].div(1e18)
         const userNetProfit = userBalance.times(epochInfo.BB.netProfitPercentage)
         const userGrossProfit = userNetProfit.times(1).div(BNify(1).minus(cdoInfo.CDO.performanceFee))
         const userGrossProfitDiscounted = userNetProfit.times(1).div(BNify(1).minus(cdoInfo.CDO.performanceFeeDiscounted))
         const feesToReturn = userGrossProfit.minus(userGrossProfitDiscounted)
-        usersAccruedFees[userAddress] = feesToReturn
 
         if (!epochInfo.feeRebate[userAddress]){
           epochInfo.feeRebate[userAddress] = BNify(0)
         }
         epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(feesToReturn)
-
-        return usersAccruedFees
+        // console.log(cdoAddress, epochInfo.startBlock, 'BB', userAddress, userBalance.toString(), feesToReturn.toString())
       }, {})
 
       Object.keys(epochInfo.feeRebate).forEach( userAddress => {
         const feesToReturn = epochInfo.feeRebate[userAddress]
-        console.log(cdoAddress, userAddress, feesToReturn.toString())
+        if (feesToReturn.gte(0)){
+          csv.push([cdoAddress, userAddress, feesToReturn.toString()].join(","))
+        }
       })
     })
-  })
+    return csv
+  }, [['CDO Addr', "User Addr", "Fee rebate"].join(",")])
+
+  // Print CSV
+  console.log(csv.join("\n"))
 }
 
 main()
