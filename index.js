@@ -198,7 +198,7 @@ async function main(){
   // Execute multicalls
   const cdoEpochsTranchePrices = await Promise.all(multicallPromises)
 
-  // feeRebate = (userNetProfit*1/0.85-userNetProfit)-(userNetProfit*1/0.93-userNetProfit)
+  // Calculate fee rebate
   const csv = Object.keys(cdosEpochs).reduce( (csv, cdoAddress) => {
 
     const cdoInfo = CDOs.find( cdoInfo => cdoInfo.CDO.address === cdoAddress )
@@ -244,34 +244,36 @@ async function main(){
         const userBalance = userAABalances[userAddress].div(1e18)
         const userNetProfit = userBalance.times(epochInfo.AA.netProfitPercentage)
         const userGrossProfit = userNetProfit.div(BNify(1).minus(cdoInfo.CDO.performanceFee))
-        const userGrossProfitDiscounted = userNetProfit.div(BNify(1).minus(cdoInfo.CDO.performanceFeeDiscounted))
-        const feesToReturn = userGrossProfit.minus(userGrossProfitDiscounted)
+        const userGrossFee = userGrossProfit.minus(userNetProfit)
+        const userDiscountedFee = userGrossFee.times(cdoInfo.CDO.performanceFeeDiscounted).div(cdoInfo.CDO.performanceFee)
+        const userFeeRebate = userGrossFee.minus(userDiscountedFee)
 
         if (!epochInfo.feeRebate[userAddress]){
           epochInfo.feeRebate[userAddress] = BNify(0)
         }
-        epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(feesToReturn)
-        // console.log(cdoAddress, epochInfo.startBlock, 'AA', userAddress, userBalance.toString(), epochInfo.AA.startPrice.toString(), epochInfo.AA.endPrice.toString(), userNetProfit.toString(), userGrossProfit.toString(), feesToReturn.toString())
+        epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(userFeeRebate)
+        // console.log(cdoAddress, epochInfo.startBlock, 'AA', userAddress, userBalance.toString(), epochInfo.AA.startPrice.toString(), epochInfo.AA.endPrice.toString(), userNetProfit.toString(), userGrossProfit.toString(), userGrossFee.toString(), userDiscountedFee.toString(), userFeeRebate.toString())
       })
 
       Object.keys(userBBBalances).forEach( (userAddress) => {
         const userBalance = userBBBalances[userAddress].div(1e18)
         const userNetProfit = userBalance.times(epochInfo.BB.netProfitPercentage)
         const userGrossProfit = userNetProfit.div(BNify(1).minus(cdoInfo.CDO.performanceFee))
-        const userGrossProfitDiscounted = userNetProfit.div(BNify(1).minus(cdoInfo.CDO.performanceFeeDiscounted))
-        const feesToReturn = userGrossProfit.minus(userGrossProfitDiscounted)
+        const userGrossFee = userGrossProfit.minus(userNetProfit)
+        const userDiscountedFee = userGrossFee.times(cdoInfo.CDO.performanceFeeDiscounted).div(cdoInfo.CDO.performanceFee)
+        const userFeeRebate = userGrossFee.minus(userDiscountedFee)
 
         if (!epochInfo.feeRebate[userAddress]){
           epochInfo.feeRebate[userAddress] = BNify(0)
         }
-        epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(feesToReturn)
-        // console.log(cdoAddress, epochInfo.startBlock, 'BB', userAddress, userBalance.toString(), userNetProfit.toString(), userGrossProfit.toString(), feesToReturn.toString())
+        epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(userFeeRebate)
+        // console.log(cdoAddress, epochInfo.startBlock, 'BB', userAddress, userBalance.toString(), epochInfo.AA.startPrice.toString(), epochInfo.AA.endPrice.toString(), userNetProfit.toString(), userGrossProfit.toString(), userGrossFee.toString(), userDiscountedFee.toString(), userFeeRebate.toString())
       }, {})
 
       Object.keys(epochInfo.feeRebate).forEach( userAddress => {
-        const feesToReturn = epochInfo.feeRebate[userAddress]
-        if (feesToReturn.gt(0)){
-          csv.push([cdoAddress, userAddress, feesToReturn.toString()].join(","))
+        const userFeeRebate = epochInfo.feeRebate[userAddress]
+        if (userFeeRebate.gt(0)){
+          csv.push([cdoAddress, userAddress, userFeeRebate.toString()].join(","))
         }
       })
     })
