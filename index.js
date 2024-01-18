@@ -199,7 +199,7 @@ async function main(){
   const cdoEpochsTranchePrices = await Promise.all(multicallPromises)
 
   // Calculate fee rebate
-  const csv = Object.keys(cdosEpochs).reduce( (csv, cdoAddress) => {
+  const feeRebate = Object.keys(cdosEpochs).reduce( (feeRebate, cdoAddress) => {
 
     const cdoInfo = CDOs.find( cdoInfo => cdoInfo.CDO.address === cdoAddress )
 
@@ -216,15 +216,13 @@ async function main(){
       epochInfo.AA = {
         startPrice: BNify(startPriceAA).div(1e18),
         endPrice: BNify(endPriceAA).div(1e18),
-        netProfitPercentage: BNify(endPriceAA).div(1e18).div(BNify(startPriceAA).div(1e18)).minus(1),
-        feeRebate: {}
+        netProfitPercentage: BNify(endPriceAA).div(1e18).div(BNify(startPriceAA).div(1e18)).minus(1)
       }
 
       epochInfo.BB = {
         startPrice: BNify(startPriceBB).div(1e18),
         endPrice: BNify(endPriceBB).div(1e18),
-        netProfitPercentage: BNify(endPriceBB).div(1e18).div(BNify(startPriceBB).div(1e18)).minus(1),
-        feeRebate: {}
+        netProfitPercentage: BNify(endPriceBB).div(1e18).div(BNify(startPriceBB).div(1e18)).minus(1)
       }
 
       if (!epochInfo.endBlock){
@@ -238,8 +236,6 @@ async function main(){
       const userAABalances = getBlockBalances(cdoAATransfers, epochInfo.startBlock, cdoReferralEvents, cdoInfo.CDO.referrals)
       const userBBBalances = getBlockBalances(cdoBBTransfers, epochInfo.startBlock, cdoReferralEvents, cdoInfo.CDO.referrals)
 
-      epochInfo.feeRebate = {}
-
       Object.keys(userAABalances).forEach( (userAddress) => {
         const userBalance = userAABalances[userAddress].div(1e18)
         const userNetProfit = userBalance.times(epochInfo.AA.netProfitPercentage)
@@ -248,10 +244,10 @@ async function main(){
         const userDiscountedFee = userGrossFee.times(cdoInfo.CDO.performanceFeeDiscounted).div(cdoInfo.CDO.performanceFee)
         const userFeeRebate = userGrossFee.minus(userDiscountedFee)
 
-        if (!epochInfo.feeRebate[userAddress]){
-          epochInfo.feeRebate[userAddress] = BNify(0)
+        if (!feeRebate[userAddress]){
+          feeRebate[userAddress] = BNify(0)
         }
-        epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(userFeeRebate)
+        feeRebate[userAddress] = feeRebate[userAddress].plus(userFeeRebate)
         // console.log(cdoAddress, epochInfo.startBlock, 'AA', userAddress, userBalance.toString(), epochInfo.AA.startPrice.toString(), epochInfo.AA.endPrice.toString(), userNetProfit.toString(), userGrossProfit.toString(), userGrossFee.toString(), userDiscountedFee.toString(), userFeeRebate.toString())
       })
 
@@ -263,22 +259,24 @@ async function main(){
         const userDiscountedFee = userGrossFee.times(cdoInfo.CDO.performanceFeeDiscounted).div(cdoInfo.CDO.performanceFee)
         const userFeeRebate = userGrossFee.minus(userDiscountedFee)
 
-        if (!epochInfo.feeRebate[userAddress]){
-          epochInfo.feeRebate[userAddress] = BNify(0)
+        if (!feeRebate[userAddress]){
+          feeRebate[userAddress] = BNify(0)
         }
-        epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(userFeeRebate)
+        feeRebate[userAddress] = feeRebate[userAddress].plus(userFeeRebate)
         // console.log(cdoAddress, epochInfo.startBlock, 'BB', userAddress, userBalance.toString(), epochInfo.AA.startPrice.toString(), epochInfo.AA.endPrice.toString(), userNetProfit.toString(), userGrossProfit.toString(), userGrossFee.toString(), userDiscountedFee.toString(), userFeeRebate.toString())
       }, {})
-
-      Object.keys(epochInfo.feeRebate).forEach( userAddress => {
-        const userFeeRebate = epochInfo.feeRebate[userAddress]
-        if (userFeeRebate.gt(0)){
-          csv.push([cdoAddress, userAddress, userFeeRebate.toString()].join(","))
-        }
-      })
     })
-    return csv
-  }, [['CDO Addr', "User Addr", "Fee rebate"].join(",")])
+    return feeRebate
+  }, {})
+  
+  const csv = [["User Addr", "Fee rebate"].join(",")]
+  
+  Object.keys(feeRebate).forEach( userAddress => {
+    const userFeeRebate = feeRebate[userAddress]
+    if (userFeeRebate.gt(0)){
+      csv.push([userAddress, userFeeRebate.toString()].join(","))
+    }
+  })
 
   // Print CSV
   console.log(csv.join("\n"))
