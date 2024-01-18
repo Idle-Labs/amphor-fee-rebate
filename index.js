@@ -243,34 +243,34 @@ async function main(){
       Object.keys(userAABalances).forEach( (userAddress) => {
         const userBalance = userAABalances[userAddress].div(1e18)
         const userNetProfit = userBalance.times(epochInfo.AA.netProfitPercentage)
-        const userGrossProfit = userNetProfit.times(1).div(BNify(1).minus(cdoInfo.CDO.performanceFee))
-        const userGrossProfitDiscounted = userNetProfit.times(1).div(BNify(1).minus(cdoInfo.CDO.performanceFeeDiscounted))
+        const userGrossProfit = userNetProfit.div(BNify(1).minus(cdoInfo.CDO.performanceFee))
+        const userGrossProfitDiscounted = userNetProfit.div(BNify(1).minus(cdoInfo.CDO.performanceFeeDiscounted))
         const feesToReturn = userGrossProfit.minus(userGrossProfitDiscounted)
 
         if (!epochInfo.feeRebate[userAddress]){
           epochInfo.feeRebate[userAddress] = BNify(0)
         }
         epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(feesToReturn)
-        // console.log(cdoAddress, epochInfo.startBlock, 'AA', userAddress, userBalance.toString(), feesToReturn.toString())
+        // console.log(cdoAddress, epochInfo.startBlock, 'AA', userAddress, userBalance.toString(), epochInfo.AA.startPrice.toString(), epochInfo.AA.endPrice.toString(), userNetProfit.toString(), userGrossProfit.toString(), feesToReturn.toString())
       })
 
       Object.keys(userBBBalances).forEach( (userAddress) => {
         const userBalance = userBBBalances[userAddress].div(1e18)
         const userNetProfit = userBalance.times(epochInfo.BB.netProfitPercentage)
-        const userGrossProfit = userNetProfit.times(1).div(BNify(1).minus(cdoInfo.CDO.performanceFee))
-        const userGrossProfitDiscounted = userNetProfit.times(1).div(BNify(1).minus(cdoInfo.CDO.performanceFeeDiscounted))
+        const userGrossProfit = userNetProfit.div(BNify(1).minus(cdoInfo.CDO.performanceFee))
+        const userGrossProfitDiscounted = userNetProfit.div(BNify(1).minus(cdoInfo.CDO.performanceFeeDiscounted))
         const feesToReturn = userGrossProfit.minus(userGrossProfitDiscounted)
 
         if (!epochInfo.feeRebate[userAddress]){
           epochInfo.feeRebate[userAddress] = BNify(0)
         }
         epochInfo.feeRebate[userAddress] = epochInfo.feeRebate[userAddress].plus(feesToReturn)
-        // console.log(cdoAddress, epochInfo.startBlock, 'BB', userAddress, userBalance.toString(), feesToReturn.toString())
+        // console.log(cdoAddress, epochInfo.startBlock, 'BB', userAddress, userBalance.toString(), userNetProfit.toString(), userGrossProfit.toString(), feesToReturn.toString())
       }, {})
 
       Object.keys(epochInfo.feeRebate).forEach( userAddress => {
         const feesToReturn = epochInfo.feeRebate[userAddress]
-        if (feesToReturn.gte(0)){
+        if (feesToReturn.gt(0)){
           csv.push([cdoAddress, userAddress, feesToReturn.toString()].join(","))
         }
       })
